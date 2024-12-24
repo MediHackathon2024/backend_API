@@ -1,10 +1,11 @@
 import os
-from fastapi import FastAPI, HTTPException, UploadFile, File
+import whisper
+import pyttsx3
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from pydantic import BaseModel
 from groq import Groq
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from whisper import load_model  # For speech-to-text transcription
 from tempfile import NamedTemporaryFile
 
 # Load environment variables from .env file
@@ -16,10 +17,16 @@ app = FastAPI()
 # Initialize Groq client with the API key
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+# Initialize Whisper model for speech-to-text
+whisper_model = whisper.load_model("base")
+
+# Initialize pyttsx3 engine for text-to-speech
+tts_engine = pyttsx3.init()
+
 # Add CORS middleware to allow requests from React frontend
 origins = [
     "http://localhost:5173",  # React local app's URL
-    "your frontend deployed url",  # Frontend deployed app's URL
+    "https://quick-triage.vercel.app/",  # Frontend deployed app's URL
 ]
 
 app.add_middleware(
@@ -30,10 +37,7 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-# Load Whisper model for speech-to-text
-whisper_model = load_model("base")
-
-# Define Pydantic model to handle text-based user input
+# Define Pydantic model to handle the user input
 class EmergencyQuery(BaseModel):
     dispatcher_input: str  # The query input from dispatcher
     scenario: str  # The scenario, e.g., "Cardiac Arrest"
@@ -58,12 +62,7 @@ async def emergency_assistance(request: EmergencyQuery):
     # Use Groq API to get model completion based on the constructed prompt
     try:
         chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
+            messages=[{"role": "user", "content": prompt}],
             model="llama3-8b-8192",  # The model name, replace if necessary
         )
 
@@ -92,7 +91,7 @@ async def emergency_assistance_voice(file: UploadFile = File(...), scenario: str
 
         # Transcribe audio to text using Whisper
         transcription_result = whisper_model.transcribe(temp_file_name)
-        dispatcher_input = transcription_result["text"]
+        dispatcher_input = transcription_result['text']
 
         # Construct prompt with transcribed text
         prompt = f"""
@@ -109,20 +108,21 @@ async def emergency_assistance_voice(file: UploadFile = File(...), scenario: str
 
         # Use Groq API to get model completion based on the constructed prompt
         chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            model="llama3-8b-8192",  # Replace with the model name
+            messages=[{"role": "user", "content": prompt}],
+            model="llama3-8b-8192",  # Replace with the model name you are using
         )
 
         # Get the response from the model
         response = chat_completion.choices[0].message.content
         cleaned_response = response.replace("\n\n", " ").replace("\n", " ").strip()
 
-        return {"transcribed_input": dispatcher_input, "response": cleaned_response}
+        # Convert the response text to speech
+        audio_file_path = "response_audio.mp3"
+        tts_engine.save_to_file(cleaned_response, audio_file_path)
+        tts_engine.runAndWait()
+
+        # Return the response text and path to the audio file
+        return {"transcribed_input": dispatcher_input, "response": cleaned_response, "audio_file": audio_file_path}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during processing: {str(e)}")

@@ -3,4 +3,6 @@ uvicorn
 groq
 python-dotenv
 pydantic
-whisper
+openai-whisper
+pyttsx3
+python-multipart
